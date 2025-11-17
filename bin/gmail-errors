@@ -1,0 +1,117 @@
+#!/bin/bash
+# Gmail Fetcher Error Inspector
+# Shows detailed error information from logs and status
+
+set -e
+
+STATUS_FILE="${1:-/media/12TB/backup/gmail_data/status.json}"
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Gmail Fetcher - Error Report"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Check if status file exists
+if [ ! -f "$STATUS_FILE" ]; then
+    echo "❌ Status file not found: $STATUS_FILE"
+    echo "Usage: $0 [status-file-path]"
+    exit 1
+fi
+
+# Get error count from status
+ERROR_COUNT=$(jq -r '.stats.errors // 0' "$STATUS_FILE")
+DOWNLOADED=$(jq -r '.stats.downloaded_emails // 0' "$STATUS_FILE")
+STATUS=$(jq -r '.status // "unknown"' "$STATUS_FILE")
+
+echo "📊 Summary:"
+echo "  Status: $STATUS"
+echo "  Downloaded: $DOWNLOADED emails"
+echo "  Errors: $ERROR_COUNT"
+echo ""
+
+if [ "$ERROR_COUNT" -eq 0 ]; then
+    echo "✅ No errors! Everything downloaded successfully."
+    exit 0
+fi
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Error Details from Logs:"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Extract errors from Docker logs
+if command -v docker &> /dev/null; then
+    echo "Checking Docker logs..."
+    echo ""
+
+    # Get container name
+    CONTAINER=$(docker compose ps -q gmail-fetcher 2>/dev/null || echo "")
+
+    if [ -z "$CONTAINER" ]; then
+        echo "⚠️  Container not running. Showing recent errors from logs:"
+        docker compose logs gmail-fetcher 2>&1 | grep -i "ERROR" | tail -20 || echo "No errors found in logs"
+    else
+        echo "Recent errors from running container:"
+        docker compose logs gmail-fetcher 2>&1 | grep -i "ERROR" || echo "No errors found in logs"
+    fi
+else
+    echo "⚠️  Docker not available. Cannot check logs."
+fi
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Error Analysis:"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Analyze error types
+if docker compose logs gmail-fetcher 2>&1 | grep -q "File name too long"; then
+    echo "🔍 Detected: Filename length errors"
+    echo "   Cause: Email subjects with many Unicode characters"
+    echo "   Impact: These emails couldn't be saved to disk"
+    echo "   Fix: Rebuild container with updated code (reduced subject length limit)"
+    echo "   Command: docker compose build && docker compose up"
+    echo ""
+fi
+
+if docker compose logs gmail-fetcher 2>&1 | grep -q "429"; then
+    echo "🔍 Detected: Rate limit errors (HTTP 429)"
+    echo "   Cause: Exceeded Gmail API quotas"
+    echo "   Impact: Some API calls were retried"
+    echo "   Fix: Reduce REQUESTS_PER_SECOND in .env (currently configured rate limiting should handle this)"
+    echo ""
+fi
+
+if docker compose logs gmail-fetcher 2>&1 | grep -q "401\|403"; then
+    echo "🔍 Detected: Authentication errors (HTTP 401/403)"
+    echo "   Cause: Invalid or expired OAuth token"
+    echo "   Impact: Cannot access Gmail API"
+    echo "   Fix: Re-authenticate with: ./setup-oauth.sh"
+    echo ""
+fi
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Recommendations:"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+if [ "$ERROR_COUNT" -lt 10 ]; then
+    echo "✅ Error count is low ($ERROR_COUNT) - this is normal"
+    echo "   Most errors are from malformed spam emails"
+    echo "   No action needed unless specific emails are missing"
+else
+    echo "⚠️  Error count is high ($ERROR_COUNT)"
+    echo "   Recommended actions:"
+    echo "   1. Review full logs: docker compose logs gmail-fetcher > logs.txt"
+    echo "   2. Check for authentication issues"
+    echo "   3. Verify disk space: df -h"
+    echo "   4. Check file permissions on /media/12TB/backup/gmail_data"
+fi
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Show how to get failed message IDs
+echo ""
+echo "💡 To get failed message IDs for manual recovery:"
+echo "   docker compose logs gmail-fetcher 2>&1 | grep 'Error processing message' | awk '{print \$10}' | tr -d ':'"
