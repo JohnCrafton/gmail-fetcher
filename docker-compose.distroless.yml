@@ -1,0 +1,84 @@
+# Docker Compose for Maximum Security (Distroless)
+# Usage: docker-compose -f docker-compose.distroless.yml up
+#
+# This configuration uses a distroless base image for maximum security:
+# - No shell, package managers, or unnecessary binaries
+# - Smaller attack surface
+# - Read-only filesystem
+#
+# Trade-off: Cannot use PUID/PGID environment variables
+# Files will be owned by UID 65532 (nonroot user)
+
+version: '3.8'
+
+services:
+  gmail-fetcher:
+    build:
+      context: .
+      dockerfile: Dockerfile.distroless
+    container_name: gmail-fetcher-distroless
+
+    # Run with dashboard by default
+    command: ["--dash"]
+
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+
+    # User is hardcoded as nonroot (65532:65532) in distroless image
+    user: "65532:65532"
+
+    # Environment variables (non-sensitive config)
+    environment:
+      - DATA_DIR=/data
+      - GMAIL_QUERY=${GMAIL_QUERY:-in:anywhere}
+      - MAX_RESULTS=${MAX_RESULTS:-0}
+      - INCLUDE_ATTACHMENTS=${INCLUDE_ATTACHMENTS:-true}
+      - DELETE_AFTER_DOWNLOAD=${DELETE_AFTER_DOWNLOAD:-false}
+      - ARCHIVE_ENABLED=${ARCHIVE_ENABLED:-false}
+      # Credentials path points to Docker secret
+      - CREDENTIALS_PATH=/run/secrets/gmail_credentials
+      # Archive password from secret
+      - ARCHIVE_PASSWORD_FILE=/run/secrets/archive_password
+
+    # Volumes
+    volumes:
+      # Persistent data directory (emails, token)
+      # Note: Files will be owned by UID 65532
+      - ./data:/data
+      # Temp directory for runtime (required for read-only filesystem)
+      - /tmp
+
+    # Docker secrets for sensitive data
+    secrets:
+      - gmail_credentials
+      - archive_password
+
+    # Interactive terminal for dashboard
+    stdin_open: true
+    tty: true
+
+    # Restart policy
+    restart: "no"
+
+    # Resource limits (optional but recommended)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+# Docker secrets
+secrets:
+  gmail_credentials:
+    file: ./secrets/credentials.json
+  archive_password:
+    # Optional: only needed if ARCHIVE_ENABLED=true
+    # Default placeholder will be ignored unless ARCHIVE_ENABLED=true
+    file: ./secrets/archive_password.txt

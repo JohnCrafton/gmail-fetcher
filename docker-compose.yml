@@ -1,0 +1,92 @@
+services:
+  gmail-fetcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Build-time user/group (can override at runtime with PUID/PGID env vars)
+        PUID: ${PUID:-65532}
+        PGID: ${PGID:-65532}
+    container_name: gmail-fetcher
+
+    # Run in headless mode by default (better for Docker)
+    # Use --dash for interactive dashboard (requires TTY)
+    command: ["--headless", "--status-file", "/data/status.json"]
+
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Add back minimal capabilities needed for PUID/PGID functionality
+    cap_add:
+      - CHOWN      # Needed to chown /data to PUID:PGID
+      - SETUID     # Needed for gosu to switch users
+      - SETGID     # Needed for gosu to switch groups
+    # Note: Not read_only because entrypoint needs to chown /data
+    # For maximum security (no PUID/PGID), use docker-compose.distroless.yml instead
+
+    # Environment variables (non-sensitive config)
+    environment:
+      - DATA_DIR=/data
+      - PUID=${PUID:-65532}
+      - PGID=${PGID:-65532}
+      - GMAIL_QUERY=${GMAIL_QUERY:-in:anywhere}
+      - MAX_RESULTS=${MAX_RESULTS:-0}
+      - INCLUDE_ATTACHMENTS=${INCLUDE_ATTACHMENTS:-true}
+      - DELETE_AFTER_DOWNLOAD=${DELETE_AFTER_DOWNLOAD:-false}
+      - ARCHIVE_ENABLED=${ARCHIVE_ENABLED:-false}
+      # Credentials path points to Docker secret
+      - CREDENTIALS_PATH=/run/secrets/gmail_credentials
+      # Archive password from secret
+      - ARCHIVE_PASSWORD_FILE=/run/secrets/archive_password
+
+    # Volumes
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      # Persistent data directory (emails, token)
+      # Option 1: Use dedicated backup directory
+      - /media/12TB/backup/gmail_data:/data
+      # Option 2: Use local data directory (uncomment and comment above)
+      # - ./data:/data
+
+    # Tmpfs mounts for user creation at runtime
+    tmpfs:
+      - /tmp
+      - /run
+
+    # Docker secrets for sensitive data
+    secrets:
+      - gmail_credentials
+      - archive_password
+
+    # Interactive terminal for dashboard
+    stdin_open: true
+    tty: true
+
+    # Restart policy
+    restart: "no"
+
+    # Resource limits (optional but recommended)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+# Docker secrets
+secrets:
+  gmail_credentials:
+    file: ./secrets/credentials.json
+  archive_password:
+    # Optional: only needed if ARCHIVE_ENABLED=true
+    # Default placeholder will be ignored unless ARCHIVE_ENABLED=true
+    file: ./secrets/archive_password.txt
+
+# Named volumes (alternative to bind mounts)
+volumes:
+  gmail_data:
+    driver: local

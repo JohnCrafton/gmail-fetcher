@@ -1,0 +1,31 @@
+# Docker Compose Override for Scheduled/Automated Runs
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.scheduled.yml up
+
+version: '3.8'
+
+services:
+  gmail-fetcher:
+    # Disable interactive terminal for scheduled runs
+    stdin_open: false
+    tty: false
+
+    # Run in batch mode (no dashboard)
+    command: []
+
+    # Auto-remove container after completion
+    restart: "no"
+
+    # Logging configuration for automated runs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Labels for organization
+    labels:
+      - "com.gmail-fetcher.mode=scheduled"
+      - "com.gmail-fetcher.type=backup"
+
+# Example cron entry (add to host crontab):
+# 0 2 * * 0 cd /path/to/gmail-fetcher && docker-compose -f docker-compose.yml -f docker-compose.scheduled.yml run --rm gmail-fetcher

@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""
+Gmail Fetcher Status Reader
+For use with powerline, tmux, or other status bars.
+"""
+
+import json
+import sys
+from pathlib import Path
+from datetime import datetime, timedelta
+
+
+def read_status(status_file=None):
+    """Read and format status from JSON file."""
+    try:
+        # If no file specified, check common locations
+        if status_file is None:
+            common_locations = [
+                '/media/12TB/backup/gmail_data/status.json',
+                './data/status.json',
+                '/tmp/gmail-fetcher-status.json',
+            ]
+            for loc in common_locations:
+                if Path(loc).exists():
+                    status_file = loc
+                    break
+            else:
+                # No file found in common locations
+                return None
+
+        status_path = Path(status_file)
+
+        if not status_path.exists():
+            return None
+
+        # Check if file is too old (>5 minutes = stale)
+        mtime = datetime.fromtimestamp(status_path.stat().st_mtime)
+        if datetime.now() - mtime > timedelta(minutes=5):
+            return None
+
+        with open(status_path) as f:
+            data = json.load(f)
+
+        return data
+
+    except Exception as e:
+        print(f"Error reading status: {e}", file=sys.stderr)
+        return None
+
+
+def format_powerline(data):
+    """Format for powerline/tmux status bar."""
+    if not data:
+        return ""
+
+    status = data.get('status', 'unknown')
+    stats = data.get('stats', {})
+
+    downloaded = stats.get('downloaded_emails', 0)
+    total = stats.get('total_emails', 0)
+    errors = stats.get('errors', 0)
+
+    if status == 'running':
+        if total > 0:
+            percent = (downloaded / total) * 100
+            output = f"📧 {downloaded}/{total} ({percent:.0f}%)"
+        else:
+            output = f"📧 {downloaded}"
+    elif status == 'complete':
+        output = f"📧 ✓ {downloaded}"
+    elif status == 'starting':
+        output = "📧 starting..."
+    else:
+        output = f"📧 {status}"
+
+    if errors > 0:
+        output += f" ⚠️{errors}"
+
+    return output
+
+
+def format_json(data):
+    """Format as JSON (for scripting)."""
+    if not data:
+        return "{}"
+    return json.dumps(data, indent=2)
+
+
+def format_simple(data):
+    """Format as simple text."""
+    if not data:
+        return "Gmail Fetcher: not running"
+
+    status = data.get('status', 'unknown')
+    stats = data.get('stats', {})
+
+    downloaded = stats.get('downloaded_emails', 0)
+    total = stats.get('total_emails', 0)
+    errors = stats.get('errors', 0)
+    size_mb = stats.get('total_size_bytes', 0) / (1024 * 1024)
+
+    output = f"Gmail Fetcher: {status}\n"
+    output += f"  Downloaded: {downloaded}"
+    if total > 0:
+        output += f"/{total}"
+    output += "\n"
+    output += f"  Size: {size_mb:.1f} MB\n"
+    output += f"  Errors: {errors}\n"
+
+    return output
+
+
+def main():
+    """Main entry point."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description='Read Gmail Fetcher status'
+    )
+    parser.add_argument(
+        '--file',
+        default=None,
+        help='Path to status file (default: auto-detect from common locations)'
+    )
+    parser.add_argument(
+        '--format',
+        choices=['powerline', 'json', 'simple'],
+        default='powerline',
+        help='Output format (default: powerline)'
+    )
+
+    args = parser.parse_args()
+
+    data = read_status(args.file)
+
+    if args.format == 'powerline':
+        output = format_powerline(data)
+    elif args.format == 'json':
+        output = format_json(data)
+    else:
+        output = format_simple(data)
+
+    print(output)
+
+
+if __name__ == '__main__':
+    main()
